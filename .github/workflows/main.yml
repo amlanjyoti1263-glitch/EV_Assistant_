@@ -16,18 +16,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout existing code
+
+      # 1. GitHub repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Java 17
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # 3. Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      # 4. Android SDK packages
       - name: Install Android SDK
         run: |
           yes | sdkmanager --licenses || true
@@ -35,23 +40,87 @@ jobs:
           sdkmanager "platforms;android-35"
           sdkmanager "build-tools;35.0.0"
 
+      # 5. Gradle
       - name: Setup Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
 
+      # 6. Find ZIP
+      - name: Find Android project ZIP
+        run: |
+          echo "ZIP files found:"
+          find . -maxdepth 2 -type f -iname "*.zip" -print
+
+      # 7. Extract ZIP
+      - name: Extract Android project
+        run: |
+          mkdir -p android_project
+
+          ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Android project ZIP not found."
+            exit 1
+          fi
+
+          echo "Using ZIP: $ZIP_FILE"
+
+          unzip -q "$ZIP_FILE" -d android_project
+
+          echo "===== Extracted files ====="
+          find android_project -maxdepth 4 -type f | sort
+
+      # 8. Locate Gradle project inside ZIP
+      - name: Locate Android Gradle project
+        run: |
+          SETTINGS_FILE=$(find android_project -type f \
+            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            | head -n 1)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: settings.gradle not found inside ZIP."
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+
+          echo "Gradle project found:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      # 9. Remove workflow files from extracted project
+      - name: Ignore bundled GitHub workflows
+        run: |
+          rm -rf "$PROJECT_DIR/.github"
+
+      # 10. Build Android APK
       - name: Build APK
         run: |
-          gradle :app:assembleDebug --no-daemon --stacktrace
+          echo "Building project from:"
+          echo "$PROJECT_DIR"
 
-      - name: Show APK
+          gradle \
+            -p "$PROJECT_DIR" \
+            :app:assembleDebug \
+            --no-daemon \
+            --stacktrace
+
+      # 11. Show APK
+      - name: Find APK
         run: |
-          find . -type f -name "*.apk" -print
+          echo "===== APK ====="
+          find "$PROJECT_DIR" \
+            -type f \
+            -name "*.apk" \
+            -print
 
+      # 12. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: EV-Assistant-Android10-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: android_project/**/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
